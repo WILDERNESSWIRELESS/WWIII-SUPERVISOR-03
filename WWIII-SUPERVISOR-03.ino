@@ -1,0 +1,428 @@
+#include <EEPROM.h>
+#include <Wire.h>
+#include <ArduinoJson.h>
+#include <BQ27441_Definitions.h>
+#include <SparkFunBQ27441.h>
+
+#define INTERRUPT_PIN   2 
+#define ENABLE_PIN      3
+#define UP_PIN          4 // --> GPIO23
+#define AVR_BUSY_PIN    6 // --> BCM26
+#define PI_BUSY_PIN     7 // --> BCM19
+#define STATUS_PIN      13
+
+#define EEPROM_ADDR     50
+
+#define DEBUG
+
+String cmdString = "";
+String messageBuffer = "";
+String data ="";
+
+char inChar;
+
+bool piStatus = false; // false=off, true=on
+bool shutdownStatus = false;
+bool startupStatus = false;
+bool BAT_OK = false;
+bool recv = false;
+bool cmdInProgress = false;
+bool requestInProgress = false;
+bool i2cInUse = false;
+bool i2cMaster = false;
+
+double temp = 0;
+
+unsigned long currentTime = 0;
+
+unsigned int designCapacity = 0;
+unsigned int soc = 0;
+unsigned int volts = 0;
+unsigned int fullCapacity = 0;
+unsigned int remainingCapacity = 0;
+unsigned int BAT_LO = 0;
+unsigned int BAT_HI = 0;
+unsigned int DEFAULT_LO = 10;
+unsigned int DEFAULT_HI = 90;
+unsigned int BAT_CAPACITY = 1200;
+unsigned int eeaddress = 0;
+
+int current = 0;
+int power = 0;
+int health = 0;
+int timeThen = 0;
+int timeNow = 0;
+int interval = 1000;
+int payloadIndex = 0;
+int index;
+
+//==============================================================================
+//========(FUNCTIONS)===========================================================
+//==============================================================================
+
+void setupBQ27441(void)
+{
+  if (!lipo.begin())
+  {
+    printNotification(F("Error: Unable to communicate with BQ27441."));
+    while (1) ;
+  }
+  printNotification(F("Connected to BQ27441!"));
+  lipo.setCapacity(BAT_CAPACITY);
+}
+
+//
+// GET INFO FROM BQ27441
+//
+
+void getBatteryStats() {
+  volts = lipo.voltage(); // Read battery voltage (mV)
+  current = lipo.current(AVG); // Read average current (mA)
+  fullCapacity = lipo.capacity(FULL); // Read full capacity (mAh)
+  remainingCapacity = lipo.capacity(REMAIN); // Read remaining capacity (mAh)
+  designCapacity = lipo.capacity(DESIGN);
+  power = lipo.power(); // Read average power draw (mW)
+  health = lipo.soh(); // Read state-of-health (%)
+  temp = lipo.temperature();
+  soc = lipo.soc();  // Read state-of-charge (%)
+  if (soc <= BAT_LO) {
+    BAT_OK = false;
+    digitalWrite(ENABLE_PIN, LOW);
+  }
+  if (soc >= BAT_HI) {
+    BAT_OK = true;
+    digitalWrite(ENABLE_PIN, HIGH);
+  }
+}
+
+//
+// Print status string
+//
+
+void printStatus()
+{
+  // Now print out those values:
+  String toPrint = "";
+  toPrint += String(volts) + "V | ";
+  toPrint += String(current) + "mA | ";
+  toPrint += String(power) + "mW | ";
+  toPrint += String(BAT_LO) + "% | ";
+  toPrint += String(soc) + "% | ";
+  toPrint += String(BAT_HI) + "% | ";
+
+  if (piStatus) {
+    toPrint += "PI UP |";
+  }
+  else {
+    toPrint += "PI DN |";
+  }
+  if (BAT_OK) {
+    toPrint += " BAT OK";
+  }
+  else {
+    toPrint += " BAT LO";
+  }
+  Serial.println(toPrint);
+}
+
+//
+// General Status Message Function
+//
+
+void printNotification(String msg) {
+  Serial.println();
+  Serial.print(" >>> ");
+  Serial.print(msg);
+  Serial.println();
+}
+
+//
+// Simple status blink
+//
+
+void blink(int times) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(STATUS_PIN, HIGH);
+    delay(50);
+    digitalWrite(STATUS_PIN, LOW);
+  }
+}
+
+//
+// Parses incoming JSON
+//
+
+void parseJsonCommand(String s) {
+  StaticJsonBuffer<128> jsonInBuffer;
+  JsonObject& recvMsg = jsonInBuffer.parseObject(s);
+
+  if (!recvMsg.success()) {
+    printNotification(F("JSON parsing failed"));
+    return;
+  }
+
+  if (recvMsg.containsKey("batlo")) {
+    BAT_LO = recvMsg["batlo"];
+    EEPROM.put(0, BAT_LO);
+    printNotification(F("Setting low battery threshold."));
+    printNotification(F("Saving to EEPROM"));
+  }
+
+  if (recvMsg.containsKey("bathi")) {
+    BAT_HI = recvMsg["bathi"];
+    EEPROM.put(sizeof(int), BAT_HI);
+    printNotification(F("Setting hi battery threshold to: "));
+    printNotification(F("Saving to EEPROM"));
+  }
+
+  if (recvMsg.containsKey("design")) {
+    printNotification(F("Setting design capacity to: "));
+    int cap = recvMsg["design"];
+    lipo.setCapacity(cap);
+    Serial.println(cap);
+  }
+
+  if (recvMsg.containsKey("cmd")) {
+    //printNotification(F("Received a command request: "));
+    String cmd = recvMsg["cmd"];
+    if (cmd.equals("time") || cmd.equals("TIME") || cmd.equals("Time")) {
+      //stats["time"].printTo(data);
+      //itoa(currentTime, data, 10);
+      data=String(currentTime);
+    }
+    if (cmd.equals("soc") || cmd.equals("SOC") || cmd.equals("Soc")) {
+      //itoa(soc, data, 10);
+      data=String(soc);
+    }
+  }
+}
+
+//
+// cmdBuilder builds commands crom individual characters
+// accepts input from serial and i2c
+//
+
+void cmdBuilder(char c) {
+  if (c == '{') {
+    // SET IN PROGRESS FLAG
+    cmdInProgress = true;
+  }
+  // IS THE CHARACTER A TERMINATION CHAR?
+  if (c == '}') {
+    messageBuffer += c;
+    // COMMAND IS NO LONGER IN PROGRESS
+    cmdInProgress = false;
+    // COPY COMMAND TO MESSAGE
+    cmdString = messageBuffer;
+    // CLEAR COMMAND STRING
+    messageBuffer = "";
+    // PARSE MESSAGE
+    parseJsonCommand(cmdString);
+    return;
+  }
+  // IS THERE A COMMAND IN PROCESS?
+  if (cmdInProgress) {
+    // THROW ANOTHER CHAR ON THE HEAP
+    messageBuffer += c;
+  }
+  else {
+    //Serial.println("INVALID INPUT");
+    messageBuffer = "";
+  }
+}
+
+//
+// HANDLE INCOMING I2C RECEIVE
+//
+
+void receiveEvent() {
+  requestInProgress = true;
+  while (Wire.available() > 0) { // loop through all but the last
+    char inChar = Wire.read(); // receive byte as a character
+    cmdBuilder(inChar);
+  }
+  requestInProgress = false;
+}
+
+//
+// HANDER SERIAL EVENT
+//
+
+void serialEvent() {
+  while (Serial.available() > 0) {
+    char inChar = Serial.read();
+    cmdBuilder(inChar);
+  }
+}
+
+//
+// HANDLE I2C REQUEST
+//
+
+void requestEvent() {
+  requestInProgress = true;
+  Wire.write(data.c_str());
+  requestInProgress = false;
+}
+
+//
+// Switch between i2c slave and master
+//
+
+void switchMode(String mode) {
+  if (mode.equals("MASTER")) {
+    Wire.end();
+    i2cMaster = true;
+    digitalWrite(AVR_BUSY_PIN, HIGH);
+    //delay(10);
+    Wire.begin();
+    //printNotification(F("AVR switching to MASTER MODE"));
+  }
+  if (mode.equals("SLAVE")) {
+    Wire.end();
+    i2cMaster = false;
+    digitalWrite(AVR_BUSY_PIN, LOW);
+    //delay(10);
+    Wire.begin(0x77);
+    //printNotification(F("AVR switching to SLAVE MODE @ 0x77"));
+  }
+}
+
+void loadParams() {
+  printNotification(F("Retrieving params from EEPROM"));
+  EEPROM.get(eeaddress, BAT_LO);
+  eeaddress += sizeof(int);
+  EEPROM.get(eeaddress, BAT_HI);
+  eeaddress = 0;
+  if (BAT_LO < 0 || BAT_LO > 100) {
+    printNotification(F("Invalid BAT_LO read, using default"));
+    BAT_LO = DEFAULT_LO;
+  }
+  if (BAT_HI < 0 || BAT_HI > 100) {
+    printNotification(F("Invalid BAT_HI read, using default"));
+    BAT_HI = DEFAULT_HI;
+  }
+}
+
+void isr(){
+  switchMode("SLAVE");
+}
+
+
+//==============================================================================
+//========(SETUP)===============================================================
+//==============================================================================
+
+
+void setup() {
+
+  // SET PIN MODES
+  pinMode(ENABLE_PIN, OUTPUT);
+  pinMode(UP_PIN, INPUT);
+  pinMode(STATUS_PIN, OUTPUT);
+  pinMode(AVR_BUSY_PIN, OUTPUT);
+  pinMode(PI_BUSY_PIN, INPUT);
+
+  // SET INITIAL PIN STATES
+  digitalWrite(ENABLE_PIN, LOW);
+  digitalWrite(AVR_BUSY_PIN, LOW);  // Flag pin is low when it is ok for PI to talk
+
+  attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), isr, RISING);
+
+  // START HARDWARE SERIAL PORT
+  Serial.begin(9600);
+  
+  // START I2C
+  //switchMode("SLAVE");
+  switchMode("MASTER");
+  
+  // REGISTER I2C CALLBACK
+  Wire.onReceive(receiveEvent);
+
+  // REGISTER I2C CALLBACK
+  Wire.onRequest(requestEvent);
+
+   // START FUEL GAUGE
+  setupBQ27441();  // Wire() is started in master mode
+
+  //loadParams();
+  
+  timeThen = millis();
+
+}
+
+//==============================================================================
+//========(LOOP)================================================================
+//==============================================================================
+
+
+void loop() {
+
+  // WHAT'S THE LOCAL TIME?
+  timeNow = millis();
+
+  // IS THE PI RUNNING?
+  piStatus = digitalRead(UP_PIN);
+
+  if (timeNow - timeThen > interval && !cmdInProgress && !shutdownStatus && !requestInProgress && !i2cInUse) {
+    switchMode("MASTER");
+    getBatteryStats();
+    printStatus();
+    blink(1);
+    timeThen = timeNow;
+    switchMode("SLAVE");
+  }
+
+  //
+  // CHECK STATE AND DO STUFF
+  //
+  /*
+    if (!BAT_OK & piStatus && !shutdownStatus) {
+      digitalWrite(SHUTDN_PIN, LOW);
+      shutdownStatus = true;
+    #ifdef DEBUG
+      Serial.println(F("********"));
+      Serial.println(F("LO BAT Detected, initiating SHUTDOWN..."));
+      Serial.println(F("********"));
+      Serial.print(F("SHUTDOWN In Progress. Waiting for system DOWN..."));
+    #endif
+    }
+
+    //if (shutdownStatus && piStatus) {
+    //  Serial.print(".");
+    //}
+
+    if (shutdownStatus && !piStatus) {
+      digitalWrite(ENABLE_PIN, LOW);
+      digitalWrite(SHUTDN_PIN, HIGH);
+      shutdownStatus = false;
+    #ifdef DEBUG
+      Serial.println();
+      Serial.println(F("********"));
+      Serial.println(F("Shutdown complete, disabling boost..."));
+      Serial.println(F("********"));
+      delay(1000);
+    #endif
+    }
+
+    if (BAT_OK && !piStatus && !startupStatus) {
+      digitalWrite(ENABLE_PIN, LOW);
+      digitalWrite(ENABLE_PIN, HIGH);
+      startupStatus = true;
+      #ifdef DEBUG
+      Serial.println(F("********"));
+      Serial.println(F("BAT OK, initiating STARTUP..."));
+      Serial.println(F("********"));
+    #endif
+    }
+
+    if (piStatus && startupStatus) {
+      startupStatus = false;
+      #ifdef DEBUG
+      Serial.println(F("********"));
+      Serial.println(F("Startup complete..."));
+      Serial.println(F("********"));
+      #endif
+    }
+  */
+}
