@@ -55,8 +55,8 @@ unsigned int BAT_CAPACITY = 1200;
 unsigned int CAPACITY_NOW = 0;
 unsigned int CAPACITY_THEN = 0;
 unsigned int eeaddress = 0;
-unsigned int blinkOnDelay = 75;
-unsigned int blinkOffDelay = 150;
+unsigned int blinkOnDelay = 50;
+unsigned int blinkOffDelay = 100;
 unsigned int CHARGING = 2;
 int timeThen = 0;
 int timeNow = 0;
@@ -152,21 +152,24 @@ void statusBlink(int d) {
     if (soc > BAT_LO && soc < BAT_HI) {
       digitalWrite(BAT_LO_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_OK_LED, HIGH);
       delay(blinkOnDelay);
-      digitalWrite(BAT_LO_LED, LOW);
       digitalWrite(BAT_OK_LED, LOW);
       delay(blinkOffDelay);
     }
     if (soc >= BAT_HI) {
       digitalWrite(BAT_LO_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_OK_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_OK_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_HI_LED, HIGH);
       delay(blinkOnDelay);
-      digitalWrite(BAT_LO_LED, LOW);
-      digitalWrite(BAT_OK_LED, LOW);
       digitalWrite(BAT_HI_LED, LOW);
       delay(blinkOffDelay);
     }
@@ -207,22 +210,25 @@ void statusBlink(int d) {
     if (soc > BAT_LO && soc < BAT_HI) {
       digitalWrite(BAT_OK_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_OK_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_LO_LED, HIGH);
       delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
-      digitalWrite(BAT_OK_LED, LOW);
       delay(blinkOffDelay);
     }
     if (soc >= BAT_HI) {
       digitalWrite(BAT_HI_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_HI_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_OK_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_OK_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_LO_LED, HIGH);
       delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
-      digitalWrite(BAT_OK_LED, LOW);
-      digitalWrite(BAT_HI_LED, LOW);
       delay(blinkOffDelay);
     }
   }
