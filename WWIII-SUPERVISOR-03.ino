@@ -1,27 +1,26 @@
 #include <EEPROM.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
-#include <BQ27441_Definitions.h>
 #include <SparkFunBQ27441.h>
 
-#define INTERRUPT_PIN   2 
+#define INTERRUPT_PIN   2
 #define ENABLE_PIN      3
-#define UP_PIN          4 // --> GPIO23
-#define AVR_BUSY_PIN    6 // --> BCM26
-#define PI_BUSY_PIN     7 // --> BCM19
-#define STATUS_PIN      13
-
-#define EEPROM_ADDR     50
+#define UP_PIN          4 // --> GPIO13
+#define AVR_BUSY_PIN    6
+#define HOST_BUSY_PIN   7
+#define BAT_LO_LED      11
+#define BAT_OK_LED      12
+#define BAT_HI_LED      13
 
 #define DEBUG
 
 String cmdString = "";
 String messageBuffer = "";
-String data ="";
+String data = "";
 
 char inChar;
 
-bool piStatus = false; // false=off, true=on
+bool hostStatus = false; // false=off, true=on
 bool shutdownStatus = false;
 bool startupStatus = false;
 bool BAT_OK = false;
@@ -29,27 +28,35 @@ bool recv = false;
 bool cmdInProgress = false;
 bool requestInProgress = false;
 bool i2cInUse = false;
-bool i2cMaster = false;
+bool i2cMaster = true;
+bool CHARGING = false;
+
 
 double temp = 0;
 
 unsigned long currentTime = 0;
+
+// Battery stats
 
 unsigned int designCapacity = 0;
 unsigned int soc = 0;
 unsigned int volts = 0;
 unsigned int fullCapacity = 0;
 unsigned int remainingCapacity = 0;
-unsigned int BAT_LO = 0;
-unsigned int BAT_HI = 0;
-unsigned int DEFAULT_LO = 10;
-unsigned int DEFAULT_HI = 90;
-unsigned int BAT_CAPACITY = 1200;
-unsigned int eeaddress = 0;
-
 int current = 0;
 int power = 0;
 int health = 0;
+
+unsigned int BAT_LO = 0;
+unsigned int BAT_HI = 0;
+unsigned int DEFAULT_LO = 10;
+unsigned int DEFAULT_HI = 100;
+unsigned int BAT_CAPACITY = 1200;
+unsigned int SOC_NOW = 0;
+unsigned int SOC_THEN = 0;
+unsigned int eeaddress = 0;
+unsigned int blinkDelay = 100;
+
 int timeThen = 0;
 int timeNow = 0;
 int interval = 1000;
@@ -85,14 +92,6 @@ void getBatteryStats() {
   health = lipo.soh(); // Read state-of-health (%)
   temp = lipo.temperature();
   soc = lipo.soc();  // Read state-of-charge (%)
-  if (soc <= BAT_LO) {
-    BAT_OK = false;
-    digitalWrite(ENABLE_PIN, LOW);
-  }
-  if (soc >= BAT_HI) {
-    BAT_OK = true;
-    digitalWrite(ENABLE_PIN, HIGH);
-  }
 }
 
 //
@@ -103,18 +102,19 @@ void printStatus()
 {
   // Now print out those values:
   String toPrint = "";
-  toPrint += String(volts) + "V | ";
+  toPrint += String(volts) + "mV | ";
   toPrint += String(current) + "mA | ";
   toPrint += String(power) + "mW | ";
+  toPrint += String(remainingCapacity) + "mAh | ";
   toPrint += String(BAT_LO) + "% | ";
   toPrint += String(soc) + "% | ";
   toPrint += String(BAT_HI) + "% | ";
 
-  if (piStatus) {
-    toPrint += "PI UP |";
+  if (hostStatus) {
+    toPrint += "HOST UP |";
   }
   else {
-    toPrint += "PI DN |";
+    toPrint += "HOST DN |";
   }
   if (BAT_OK) {
     toPrint += " BAT OK";
@@ -140,11 +140,90 @@ void printNotification(String msg) {
 // Simple status blink
 //
 
-void blink(int times) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(STATUS_PIN, HIGH);
-    delay(50);
-    digitalWrite(STATUS_PIN, LOW);
+void statusBlink(int d) {
+  if (d == 1) {
+    if (soc <= BAT_LO) {
+      digitalWrite(BAT_LO_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      delay(blinkDelay);
+    }
+    if (soc > BAT_LO && soc < BAT_HI) {
+      digitalWrite(BAT_LO_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_OK_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      digitalWrite(BAT_OK_LED, LOW);
+      delay(blinkDelay);
+    }
+    if (soc >= BAT_HI) {
+      digitalWrite(BAT_LO_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_OK_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_HI_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      digitalWrite(BAT_OK_LED, LOW);
+      digitalWrite(BAT_HI_LED, LOW);
+      delay(blinkDelay);
+    }
+  }
+  if (d == 2) {
+    if (soc <= BAT_LO) {
+      digitalWrite(BAT_LO_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      delay(blinkDelay);
+    }
+    if (soc > BAT_LO && soc < BAT_HI) {
+      digitalWrite(BAT_OK_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      digitalWrite(BAT_OK_LED, LOW);
+      delay(blinkDelay);
+    }
+    if (soc >= BAT_HI) {
+      digitalWrite(BAT_HI_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_OK_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      digitalWrite(BAT_OK_LED, LOW);
+      digitalWrite(BAT_HI_LED, LOW);
+      delay(blinkDelay);
+    }
+  }
+  if (d == 3) {
+    if (soc <= BAT_LO) {
+      digitalWrite(BAT_LO_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      delay(blinkDelay);
+    }
+    if (soc > BAT_LO && soc < BAT_HI) {
+      digitalWrite(BAT_OK_LED, HIGH);
+      digitalWrite(BAT_LO_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      digitalWrite(BAT_OK_LED, LOW);
+      delay(blinkDelay);
+    }
+    if (soc >= BAT_HI) {
+      digitalWrite(BAT_HI_LED, HIGH);
+      digitalWrite(BAT_OK_LED, HIGH);
+      digitalWrite(BAT_LO_LED, HIGH);
+      delay(blinkDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      digitalWrite(BAT_OK_LED, LOW);
+      digitalWrite(BAT_HI_LED, LOW);
+      delay(blinkDelay);
+    }
   }
 }
 
@@ -188,11 +267,11 @@ void parseJsonCommand(String s) {
     if (cmd.equals("time") || cmd.equals("TIME") || cmd.equals("Time")) {
       //stats["time"].printTo(data);
       //itoa(currentTime, data, 10);
-      data=String(currentTime);
+      data = String(currentTime);
     }
     if (cmd.equals("soc") || cmd.equals("SOC") || cmd.equals("Soc")) {
       //itoa(soc, data, 10);
-      data=String(soc);
+      data = String(soc);
     }
   }
 }
@@ -285,13 +364,17 @@ void switchMode(String mode) {
     //delay(10);
     Wire.begin(0x77);
     //printNotification(F("AVR switching to SLAVE MODE @ 0x77"));
+    // REGISTER I2C CALLBACK
+    Wire.onReceive(receiveEvent);
+    // REGISTER I2C CALLBACK
+    Wire.onRequest(requestEvent);
   }
 }
 
 void loadParams() {
   printNotification(F("Retrieving params from EEPROM"));
   EEPROM.get(eeaddress, BAT_LO);
-  eeaddress += sizeof(int);
+  eeaddress += sizeof(unsigned int);
   EEPROM.get(eeaddress, BAT_HI);
   eeaddress = 0;
   if (BAT_LO < 0 || BAT_LO > 100) {
@@ -304,9 +387,10 @@ void loadParams() {
   }
 }
 
-void isr(){
+void isr() {
   switchMode("SLAVE");
 }
+
 
 
 //==============================================================================
@@ -319,34 +403,32 @@ void setup() {
   // SET PIN MODES
   pinMode(ENABLE_PIN, OUTPUT);
   pinMode(UP_PIN, INPUT);
-  pinMode(STATUS_PIN, OUTPUT);
+  pinMode(BAT_LO_LED, OUTPUT);
+  pinMode(BAT_OK_LED, OUTPUT);
+  pinMode(BAT_HI_LED, OUTPUT);
   pinMode(AVR_BUSY_PIN, OUTPUT);
-  pinMode(PI_BUSY_PIN, INPUT);
+  pinMode(HOST_BUSY_PIN, INPUT);
 
   // SET INITIAL PIN STATES
   digitalWrite(ENABLE_PIN, LOW);
   digitalWrite(AVR_BUSY_PIN, LOW);  // Flag pin is low when it is ok for PI to talk
 
+  // ATTACH INTERRUPT
   attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), isr, RISING);
 
   // START HARDWARE SERIAL PORT
   Serial.begin(9600);
-  
+
   // START I2C
-  //switchMode("SLAVE");
-  switchMode("MASTER");
-  
-  // REGISTER I2C CALLBACK
-  Wire.onReceive(receiveEvent);
+  //switchMode("MASTER");
+  Wire.begin();
 
-  // REGISTER I2C CALLBACK
-  Wire.onRequest(requestEvent);
-
-   // START FUEL GAUGE
+  // START FUEL GAUGE
   setupBQ27441();  // Wire() is started in master mode
 
-  //loadParams();
-  
+  // LOAD PARAMETERS FROM EEPROM
+  loadParams();
+  SOC_THEN = lipo.soc();
   timeThen = millis();
 
 }
@@ -362,22 +444,39 @@ void loop() {
   timeNow = millis();
 
   // IS THE PI RUNNING?
-  piStatus = digitalRead(UP_PIN);
+  hostStatus = digitalRead(UP_PIN);
+
 
   if (timeNow - timeThen > interval && !cmdInProgress && !shutdownStatus && !requestInProgress && !i2cInUse) {
-    switchMode("MASTER");
     getBatteryStats();
     printStatus();
-    blink(1);
+    SOC_NOW = lipo.soc();
+    if (SOC_NOW > SOC_THEN) {
+      statusBlink(1);
+    }
+    if (SOC_NOW < SOC_THEN) {
+      statusBlink(2);
+    }
+    if(SOC_NOW == SOC_THEN){
+      statusBlink(3);
+    }
+    if (soc <= BAT_LO) {
+      BAT_OK = false;
+      digitalWrite(ENABLE_PIN, LOW);
+    }
+    if (soc >= BAT_HI) {
+      BAT_OK = true;
+      digitalWrite(ENABLE_PIN, HIGH);
+    }
+    SOC_THEN = SOC_NOW;
     timeThen = timeNow;
-    switchMode("SLAVE");
   }
 
   //
   // CHECK STATE AND DO STUFF
   //
   /*
-    if (!BAT_OK & piStatus && !shutdownStatus) {
+    if (!BAT_OK & hostStatus && !shutdownStatus) {
       digitalWrite(SHUTDN_PIN, LOW);
       shutdownStatus = true;
     #ifdef DEBUG
@@ -388,11 +487,11 @@ void loop() {
     #endif
     }
 
-    //if (shutdownStatus && piStatus) {
+    //if (shutdownStatus && hostStatus) {
     //  Serial.print(".");
     //}
 
-    if (shutdownStatus && !piStatus) {
+    if (shutdownStatus && !hostStatus) {
       digitalWrite(ENABLE_PIN, LOW);
       digitalWrite(SHUTDN_PIN, HIGH);
       shutdownStatus = false;
@@ -405,7 +504,7 @@ void loop() {
     #endif
     }
 
-    if (BAT_OK && !piStatus && !startupStatus) {
+    if (BAT_OK && !hostStatus && !startupStatus) {
       digitalWrite(ENABLE_PIN, LOW);
       digitalWrite(ENABLE_PIN, HIGH);
       startupStatus = true;
@@ -416,7 +515,7 @@ void loop() {
     #endif
     }
 
-    if (piStatus && startupStatus) {
+    if (hostStatus && startupStatus) {
       startupStatus = false;
       #ifdef DEBUG
       Serial.println(F("********"));
