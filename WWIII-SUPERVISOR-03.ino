@@ -29,7 +29,7 @@ bool cmdInProgress = false;
 bool requestInProgress = false;
 bool i2cInUse = false;
 bool i2cMaster = true;
-bool CHARGING = false;
+
 
 
 double temp = 0;
@@ -49,14 +49,15 @@ int health = 0;
 
 unsigned int BAT_LO = 0;
 unsigned int BAT_HI = 0;
-unsigned int DEFAULT_LO = 10;
-unsigned int DEFAULT_HI = 100;
+unsigned int DEFAULT_LO = 25;
+unsigned int DEFAULT_HI = 95;
 unsigned int BAT_CAPACITY = 1200;
-unsigned int SOC_NOW = 0;
-unsigned int SOC_THEN = 0;
+unsigned int CAPACITY_NOW = 0;
+unsigned int CAPACITY_THEN = 0;
 unsigned int eeaddress = 0;
-unsigned int blinkDelay = 100;
-
+unsigned int blinkOnDelay = 75;
+unsigned int blinkOffDelay = 150;
+unsigned int CHARGING = 2;
 int timeThen = 0;
 int timeNow = 0;
 int interval = 1000;
@@ -64,7 +65,7 @@ int payloadIndex = 0;
 int index;
 
 //==============================================================================
-//========(FUNCTIONS)===========================================================
+//========/FUNCTIONS/===========================================================
 //==============================================================================
 
 void setupBQ27441(void)
@@ -144,85 +145,85 @@ void statusBlink(int d) {
   if (d == 1) {
     if (soc <= BAT_LO) {
       digitalWrite(BAT_LO_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
-      delay(blinkDelay);
+      delay(blinkOffDelay);
     }
     if (soc > BAT_LO && soc < BAT_HI) {
       digitalWrite(BAT_LO_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_OK_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
       digitalWrite(BAT_OK_LED, LOW);
-      delay(blinkDelay);
+      delay(blinkOffDelay);
     }
     if (soc >= BAT_HI) {
       digitalWrite(BAT_LO_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_OK_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_HI_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
       digitalWrite(BAT_OK_LED, LOW);
       digitalWrite(BAT_HI_LED, LOW);
-      delay(blinkDelay);
+      delay(blinkOffDelay);
     }
   }
   if (d == 2) {
     if (soc <= BAT_LO) {
       digitalWrite(BAT_LO_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
-      delay(blinkDelay);
+      delay(blinkOffDelay);
     }
     if (soc > BAT_LO && soc < BAT_HI) {
       digitalWrite(BAT_OK_LED, HIGH);
-      delay(blinkDelay);
       digitalWrite(BAT_LO_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
       digitalWrite(BAT_OK_LED, LOW);
-      delay(blinkDelay);
+      delay(blinkOffDelay);
     }
     if (soc >= BAT_HI) {
       digitalWrite(BAT_HI_LED, HIGH);
-      delay(blinkDelay);
       digitalWrite(BAT_OK_LED, HIGH);
-      delay(blinkDelay);
       digitalWrite(BAT_LO_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
       digitalWrite(BAT_OK_LED, LOW);
       digitalWrite(BAT_HI_LED, LOW);
-      delay(blinkDelay);
+      delay(blinkOffDelay);
     }
   }
   if (d == 3) {
     if (soc <= BAT_LO) {
       digitalWrite(BAT_LO_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
-      delay(blinkDelay);
+      delay(blinkOffDelay);
     }
     if (soc > BAT_LO && soc < BAT_HI) {
       digitalWrite(BAT_OK_LED, HIGH);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
       digitalWrite(BAT_OK_LED, LOW);
-      delay(blinkDelay);
+      delay(blinkOffDelay);
     }
     if (soc >= BAT_HI) {
       digitalWrite(BAT_HI_LED, HIGH);
+      delay(blinkOnDelay);
       digitalWrite(BAT_OK_LED, HIGH);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, HIGH);
-      delay(blinkDelay);
+      delay(blinkOnDelay);
       digitalWrite(BAT_LO_LED, LOW);
       digitalWrite(BAT_OK_LED, LOW);
       digitalWrite(BAT_HI_LED, LOW);
-      delay(blinkDelay);
+      delay(blinkOffDelay);
     }
   }
 }
@@ -394,7 +395,7 @@ void isr() {
 
 
 //==============================================================================
-//========(SETUP)===============================================================
+//========/SETUP/===============================================================
 //==============================================================================
 
 
@@ -428,13 +429,13 @@ void setup() {
 
   // LOAD PARAMETERS FROM EEPROM
   loadParams();
-  SOC_THEN = lipo.soc();
+  CAPACITY_THEN = lipo.capacity(REMAIN);
   timeThen = millis();
 
 }
 
 //==============================================================================
-//========(LOOP)================================================================
+//========/LOOP/================================================================
 //==============================================================================
 
 
@@ -450,16 +451,19 @@ void loop() {
   if (timeNow - timeThen > interval && !cmdInProgress && !shutdownStatus && !requestInProgress && !i2cInUse) {
     getBatteryStats();
     printStatus();
-    SOC_NOW = lipo.soc();
-    if (SOC_NOW > SOC_THEN) {
-      statusBlink(1);
+
+    CAPACITY_NOW = lipo.capacity(REMAIN);
+
+    if (CAPACITY_NOW > CAPACITY_THEN) {
+      CHARGING = 1;
     }
-    if (SOC_NOW < SOC_THEN) {
-      statusBlink(2);
+    //if (CAPACITY_NOW == CAPACITY_THEN) {
+    //  CHARGING = 2;;
+    //}
+    if (CAPACITY_NOW < CAPACITY_THEN) {
+      CHARGING = 3;
     }
-    if(SOC_NOW == SOC_THEN){
-      statusBlink(3);
-    }
+    statusBlink(CHARGING);
     if (soc <= BAT_LO) {
       BAT_OK = false;
       digitalWrite(ENABLE_PIN, LOW);
@@ -468,7 +472,7 @@ void loop() {
       BAT_OK = true;
       digitalWrite(ENABLE_PIN, HIGH);
     }
-    SOC_THEN = SOC_NOW;
+    CAPACITY_THEN = CAPACITY_NOW;
     timeThen = timeNow;
   }
 
