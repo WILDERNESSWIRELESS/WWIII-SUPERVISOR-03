@@ -152,24 +152,24 @@ void statusBlink(int d) {
     if (soc > BAT_LO && soc < BAT_HI) {
       digitalWrite(BAT_LO_LED, HIGH);
       delay(blinkOnDelay);
-      digitalWrite(BAT_LO_LED, LOW);
-      delay(blinkOffDelay);
       digitalWrite(BAT_OK_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_OK_LED, LOW);
       delay(blinkOffDelay);
     }
     if (soc >= BAT_HI) {
       digitalWrite(BAT_LO_LED, HIGH);
       delay(blinkOnDelay);
-      digitalWrite(BAT_LO_LED, LOW);
-      delay(blinkOffDelay);
       digitalWrite(BAT_OK_LED, HIGH);
       delay(blinkOnDelay);
-      digitalWrite(BAT_OK_LED, LOW);
-      delay(blinkOffDelay);
       digitalWrite(BAT_HI_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_LO_LED, LOW);
+      delay(blinkOffDelay);
+      digitalWrite(BAT_OK_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_HI_LED, LOW);
       delay(blinkOffDelay);
     }
@@ -210,24 +210,24 @@ void statusBlink(int d) {
     if (soc > BAT_LO && soc < BAT_HI) {
       digitalWrite(BAT_OK_LED, HIGH);
       delay(blinkOnDelay);
-      digitalWrite(BAT_OK_LED, LOW);
-      delay(blinkOffDelay);
       digitalWrite(BAT_LO_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_OK_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_LO_LED, LOW);
       delay(blinkOffDelay);
     }
     if (soc >= BAT_HI) {
       digitalWrite(BAT_HI_LED, HIGH);
       delay(blinkOnDelay);
-      digitalWrite(BAT_HI_LED, LOW);
-      delay(blinkOffDelay);
       digitalWrite(BAT_OK_LED, HIGH);
       delay(blinkOnDelay);
-      digitalWrite(BAT_OK_LED, LOW);
-      delay(blinkOffDelay);
       digitalWrite(BAT_LO_LED, HIGH);
       delay(blinkOnDelay);
+      digitalWrite(BAT_HI_LED, LOW);
+      delay(blinkOffDelay);
+      digitalWrite(BAT_OK_LED, LOW);
+      delay(blinkOffDelay);
       digitalWrite(BAT_LO_LED, LOW);
       delay(blinkOffDelay);
     }
